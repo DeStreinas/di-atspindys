@@ -289,294 +289,398 @@
   </div>
 
   <script>
-    const $ = id => document.getElementById(id);
-    const clock = $('clock');
-    const date = $('date');
-    const greeting = $('greeting');
-    const state = $('state');
-    const transcript = $('transcript');
-    const connection = $('connection');
-    const canvas = $('wave');
-    const ctx = canvas.getContext('2d');
+const $ = id => document.getElementById(id);
+const clock = $('clock');
+const date = $('date');
+const greeting = $('greeting');
+const state = $('state');
+const transcript = $('transcript');
+const connection = $('connection');
+const canvas = $('wave');
+const ctx = canvas.getContext('2d');
 
-    let active = false;
-    let audioContext = null;
-    let analyser = null;
-    let stream = null;
-    let animationFrame = 0;
-    let recognition = null;
-    let manualMode = false;
-    let wakeAvailable = false;
-    let restarting = false;
+let active = false;
+let recording = false;
+let processing = false;
+let audioContext = null;
+let analyser = null;
+let micAnalyser = null;
+let stream = null;
+let animationFrame = 0;
+let recorder = null;
+let recordedChunks = [];
+let playbackElement = null;
+let playbackSource = null;
+let playbackAnalyser = null;
 
-    function updateClock() {
-      const now = new Date();
-      clock.textContent = new Intl.DateTimeFormat('lt-LT', {
-        hour: '2-digit', minute: '2-digit', hour12: false
-      }).format(now);
+function updateClock() {
+  const now = new Date();
+  clock.textContent = new Intl.DateTimeFormat('lt-LT', {
+    hour: '2-digit', minute: '2-digit', hour12: false
+  }).format(now);
 
-      date.textContent = new Intl.DateTimeFormat('lt-LT', {
-        weekday: 'long', year: 'numeric',
-        month: 'long', day: 'numeric'
-      }).format(now);
+  date.textContent = new Intl.DateTimeFormat('lt-LT', {
+    weekday: 'long', year: 'numeric',
+    month: 'long', day: 'numeric'
+  }).format(now);
 
-      const hour = now.getHours();
-      greeting.textContent =
-        hour < 5 ? 'Labos nakties.' :
-        hour < 12 ? 'Labas rytas.' :
-        hour < 18 ? 'Laba diena.' : 'Labas vakaras.';
+  const hour = now.getHours();
+  greeting.textContent =
+    hour < 5 ? 'Labos nakties.' :
+    hour < 12 ? 'Labas rytas.' :
+    hour < 18 ? 'Laba diena.' : 'Labas vakaras.';
+}
+
+updateClock();
+setInterval(updateClock, 1000);
+
+function setState(value) {
+  state.textContent = value;
+}
+
+async function startAudio() {
+  if (stream && audioContext) {
+    await audioContext.resume();
+    return;
+  }
+
+  stream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true
+    }
+  });
+
+  audioContext = new (window.AudioContext ||
+    window.webkitAudioContext)();
+
+  await audioContext.resume();
+
+  micAnalyser = audioContext.createAnalyser();
+  micAnalyser.fftSize = 512;
+  micAnalyser.smoothingTimeConstant = 0.78;
+
+  audioContext.createMediaStreamSource(stream).connect(micAnalyser);
+  analyser = micAnalyser;
+
+  resizeCanvas();
+  drawWave();
+}
+
+function resizeCanvas() {
+  const rect = canvas.getBoundingClientRect();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = Math.round(rect.width * dpr);
+  canvas.height = Math.round(rect.height * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+window.addEventListener('resize', resizeCanvas);
+
+function drawWave() {
+  cancelAnimationFrame(animationFrame);
+
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  if (!w || !h) return;
+
+  let phase = 0;
+
+  function frame() {
+    animationFrame = requestAnimationFrame(frame);
+    ctx.clearRect(0, 0, w, h);
+    phase += 0.025;
+
+    const currentAnalyser = analyser;
+    let bins = null;
+
+    if (currentAnalyser) {
+      bins = new Uint8Array(currentAnalyser.frequencyBinCount);
+      currentAnalyser.getByteFrequencyData(bins);
     }
 
-    updateClock();
-    setInterval(updateClock, 1000);
+    const energy = bins
+      ? bins.reduce((sum, value) => sum + value, 0) /
+        bins.length / 110
+      : 0.04;
 
-    function setState(text) {
-      state.textContent = text;
+    const amplitude = 5 + Math.min(energy, 1) * 46;
+    const lines = 7;
+
+    for (let layer = 0; layer < lines; layer++) {
+      ctx.beginPath();
+
+      for (let x = 0; x <= w; x += 2) {
+        const t = x / w;
+        const envelope = Math.pow(Math.sin(Math.PI * t), 0.8);
+        const frequency = 1.7 + layer * 0.11;
+        const audio = bins
+          ? bins[Math.min(
+              bins.length - 1,
+              Math.floor(t * bins.length)
+            )] / 255 * 0.7
+          : 0;
+
+        const wave =
+          Math.sin(t * Math.PI * frequency * 2 + phase +
+            layer * 0.24) *
+          amplitude * (0.2 + audio) * envelope;
+
+        const ripple =
+          Math.sin(t * 18 - phase * 1.5 + layer) *
+          amplitude * 0.13 * envelope;
+
+        const y = h / 2 + wave + ripple;
+        if (x === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+
+      ctx.strokeStyle =
+        `rgba(190, 205, 255, ${0.12 + layer / lines * 0.48})`;
+      ctx.lineWidth = layer === lines - 1 ? 1.8 : 1;
+      ctx.stroke();
+    }
+  }
+
+  frame();
+}
+
+async function beginRecording() {
+  if (active || processing) return;
+
+  active = true;
+  document.body.classList.add('active');
+  connection.textContent = 'AKTYVUS';
+  transcript.textContent = '';
+
+  try {
+    await startAudio();
+
+    if (!window.MediaRecorder) {
+      throw new Error('Ši naršyklė nepalaiko garso įrašymo.');
     }
 
-    async function startAudio() {
-      if (stream) return;
+    const mimeType = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/mp4'
+    ].find(type => MediaRecorder.isTypeSupported(type));
 
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        }
+    recorder = mimeType
+      ? new MediaRecorder(stream, { mimeType })
+      : new MediaRecorder(stream);
+
+    recordedChunks = [];
+
+    recorder.ondataavailable = event => {
+      if (event.data.size > 0) recordedChunks.push(event.data);
+    };
+
+    recorder.onerror = event => {
+      console.error('Recording error:', event.error);
+      setState('Įrašymo klaida');
+    };
+
+    recorder.onstop = () => {
+      recording = false;
+      $('mic').disabled = true;
+      processRecording().finally(() => {
+        $('mic').disabled = false;
       });
+    };
 
-      audioContext = new (window.AudioContext ||
-                          window.webkitAudioContext)();
+    recorder.start(250);
+    recording = true;
+    setState('Klausausi... paspausk mikrofoną, kai baigsi');
+  } catch (error) {
+    console.error('Could not start recording:', error);
+    setState('Mikrofonas nepasiekiamas');
+    transcript.textContent = error.message ||
+      'Patikrink mikrofono leidimus ir bandyk dar kartą.';
+    active = false;
+    document.body.classList.remove('active');
+    connection.textContent = 'PARENGTAS';
+  }
+}
 
-      await audioContext.resume();
-      analyser = audioContext.createAnalyser();
-      analyser.fftSize = 512;
-      analyser.smoothingTimeConstant = 0.78;
+async function processRecording() {
+  if (processing) return;
+  processing = true;
 
-      audioContext.createMediaStreamSource(stream).connect(analyser);
-      resizeCanvas();
-      drawWave();
+  try {
+    const type = recorder?.mimeType || 'audio/webm';
+    const audio = new Blob(recordedChunks, { type });
+    recordedChunks = [];
+
+    if (!audio.size) throw new Error('Garso įrašas tuščias.');
+
+    setState('Atpažįstu kalbą...');
+
+    const sttResponse = await fetch('/api/transcribe', {
+      method: 'POST',
+      headers: { 'Content-Type': type },
+      body: audio
+    });
+
+    const stt = await sttResponse.json();
+    if (!sttResponse.ok) {
+      throw new Error(stt.error || 'Kalbos atpažinimas nepavyko.');
     }
 
-    function resizeCanvas() {
-      const rect = canvas.getBoundingClientRect();
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      canvas.width = Math.round(rect.width * dpr);
-      canvas.height = Math.round(rect.height * dpr);
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const userText = String(stt.text || '').trim();
+    if (!userText) throw new Error('Neatpažinau tavo žodžių.');
+
+    transcript.textContent = userText;
+    setState('Galvoju...');
+
+    const chatResponse = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: [{ role: 'user', text: userText }]
+      })
+    });
+
+    const chat = await chatResponse.json();
+    if (!chatResponse.ok) {
+      throw new Error(chat.error || 'AI atsakymas nepavyko.');
     }
 
-    window.addEventListener('resize', resizeCanvas);
+    const answer = String(chat.answer || '').trim();
+    if (!answer) throw new Error('AI grąžino tuščią atsakymą.');
 
-    function drawWave() {
-      cancelAnimationFrame(animationFrame);
+    transcript.textContent = answer;
+    setState('Kalbu...');
 
-      const w = canvas.clientWidth;
-      const h = canvas.clientHeight;
-      if (!w || !h) return;
+    const ttsResponse = await fetch('/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: answer })
+    });
 
-      const bins = analyser
-        ? new Uint8Array(analyser.frequencyBinCount)
-        : null;
-
-      let phase = 0;
-
-      function frame() {
-        animationFrame = requestAnimationFrame(frame);
-        ctx.clearRect(0, 0, w, h);
-        phase += 0.025;
-
-        if (bins && analyser) analyser.getByteFrequencyData(bins);
-
-        const energy = bins
-          ? bins.reduce((sum, value) => sum + value, 0) /
-            bins.length / 110
-          : 0.04;
-
-        const amplitude = 5 + Math.min(energy, 1) * 46;
-        const lines = 7;
-
-        for (let layer = 0; layer < lines; layer++) {
-          ctx.beginPath();
-
-          for (let x = 0; x <= w; x += 2) {
-            const t = x / w;
-            const envelope = Math.pow(Math.sin(Math.PI * t), 0.8);
-            const frequency = 1.7 + layer * 0.11;
-            const audio = bins
-              ? (bins[Math.min(
-                  bins.length - 1,
-                  Math.floor(t * bins.length)
-                )] / 255) * 0.7
-              : 0;
-
-            const wave =
-              Math.sin(t * Math.PI * frequency * 2 + phase +
-                       layer * 0.24) *
-              (amplitude * (0.2 + audio)) * envelope;
-
-            const ripple =
-              Math.sin(t * 18 - phase * 1.5 + layer) *
-              amplitude * 0.13 * envelope;
-
-            const y = h / 2 + wave + ripple;
-            if (x === 0) ctx.moveTo(x, y);
-            else ctx.lineTo(x, y);
-          }
-
-          const alpha = 0.12 + (layer / lines) * 0.48;
-          ctx.strokeStyle = `rgba(190, 205, 255, ${alpha})`;
-          ctx.lineWidth = layer === lines - 1 ? 1.8 : 1;
-          ctx.stroke();
-        }
-      }
-
-      frame();
+    if (!ttsResponse.ok) {
+      const error = await ttsResponse.json().catch(() => ({}));
+      throw new Error(error.error || 'Balso sintezė nepavyko.');
     }
 
-    async function enterConversation(fromWake = false) {
-      if (active) return;
+    const wav = await ttsResponse.blob();
+    await playReply(wav);
 
-      active = true;
-      manualMode = !fromWake;
-      document.body.classList.add('active');
-      connection.textContent = 'AKTYVUS';
-      setState('Klausausi...');
-      transcript.textContent = '';
-
-      try {
-        await startAudio();
-        if (recognition) {
-          try { recognition.stop(); } catch {}
-        }
-        startCommandRecognition();
-      } catch (error) {
-        setState('Mikrofonas nepasiekiamas');
-        transcript.textContent =
-          'Patikrinkite naršyklės mikrofono leidimus.';
-        console.error(error);
-      }
+    if (active) setState('Atsakiau. Paspausk mikrofoną, kad kalbėtum vėl.');
+  } catch (error) {
+    console.error('Voice pipeline error:', error);
+    if (active) {
+      setState('Nepavyko apdoroti');
+      transcript.textContent = error.message ||
+        'Įvyko klaida. Pabandyk dar kartą.';
     }
+  } finally {
+    processing = false;
+  }
+}
 
-    function leaveConversation() {
-      active = false;
-      manualMode = false;
-      restarting = false;
-      document.body.classList.remove('active', 'speaking');
-      connection.textContent = 'PARENGTAS';
-      setState('Klausausi...');
-      transcript.textContent = '';
+async function playReply(wav) {
+  if (!audioContext) throw new Error('Garso sistema neparuošta.');
 
-      if (recognition) {
-        try { recognition.stop(); } catch {}
-      }
+  await audioContext.resume();
 
-      cancelAnimationFrame(animationFrame);
+  if (!playbackElement) {
+    playbackElement = new Audio();
+    playbackSource = audioContext.createMediaElementSource(playbackElement);
+    playbackAnalyser = audioContext.createAnalyser();
+    playbackAnalyser.fftSize = 512;
+    playbackAnalyser.smoothingTimeConstant = 0.78;
 
-      if (audioContext) {
-        audioContext.close().catch(() => {});
-        audioContext = null;
-      }
+    playbackSource.connect(playbackAnalyser);
+    playbackAnalyser.connect(audioContext.destination);
+  }
 
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-        stream = null;
-        analyser = null;
-      }
+  const url = URL.createObjectURL(wav);
 
-      // Re-arm wake-word listening after the mic has been released.
-      setTimeout(startWakeRecognition, 800);
-    }
+  try {
+    analyser = playbackAnalyser;
+    document.body.classList.add('speaking');
+    playbackElement.src = url;
+    await playbackElement.play();
 
-    function startCommandRecognition() {
-      if (!recognition || !active) {
-        setState('Mikrofonas veikia');
-        transcript.textContent =
-          'Garso vizualizacija veikia. Kalbos atpažinimas šioje naršyklėje nepalaikomas.';
-        return;
-      }
+    await new Promise((resolve, reject) => {
+      playbackElement.onended = resolve;
+      playbackElement.onerror = () =>
+        reject(new Error('Nepavyko paleisti atsakymo garso.'));
+    });
+  } finally {
+    document.body.classList.remove('speaking');
+    analyser = micAnalyser;
+    playbackElement.onended = null;
+    playbackElement.onerror = null;
+    playbackElement.removeAttribute('src');
+    playbackElement.load();
+    URL.revokeObjectURL(url);
+  }
+}
 
-      try {
-        recognition.lang = 'lt-LT';
-        recognition.continuous = false;
-        recognition.interimResults = true;
-        recognition.onresult = event => {
-          let text = '';
-          for (let i = event.resultIndex; i < event.results.length; i++) {
-            text += event.results[i][0].transcript;
-          }
-          transcript.textContent = text;
-          setState(event.results[event.results.length - 1].isFinal
-            ? 'Išgirdau'
-            : 'Klausausi...');
-        };
-        recognition.onend = () => {
-          if (active && manualMode) {
-            setState('Paspausk mikrofoną ir bandyk dar kartą');
-          }
-        };
-        recognition.start();
-      } catch (error) {
-        console.warn('Speech recognition:', error);
-      }
-    }
+function stopRecording() {
+  if (recorder && recorder.state !== 'inactive') {
+    setState('Apdoroju tavo klausimą...');
+    recorder.stop();
+  }
+}
 
-    function startWakeRecognition() {
-      if (!recognition || active || restarting) return;
-      restarting = true;
+function leaveConversation() {
+  active = false;
+  document.body.classList.remove('active', 'speaking');
+  connection.textContent = 'PARENGTAS';
+  setState('Paspausk mikrofoną, kad pradėtum');
+  transcript.textContent = '';
 
-      try {
-        recognition.lang = 'lt-LT';
-        recognition.continuous = true;
-        recognition.interimResults = true;
+  if (recorder && recorder.state !== 'inactive') {
+    recorder.onstop = null;
+    recorder.stop();
+  }
 
-        recognition.onresult = event => {
-          let phrase = '';
-          for (let i = event.resultIndex; i < event.results.length; i++) {
-            phrase += event.results[i][0].transcript.toLowerCase();
-          }
+  recording = false;
+  recordedChunks = [];
 
-          if (phrase.includes('atspindy') &&
-              (phrase.includes('labas') || phrase.includes('hey'))) {
-            restarting = false;
-            enterConversation(true);
-          }
-        };
+  if (playbackElement) {
+    playbackElement.pause();
+    playbackElement.removeAttribute('src');
+    playbackElement.load();
+  }
 
-        recognition.onerror = event => {
-          if (event.error !== 'no-speech') {
-            console.warn('Wake phrase:', event.error);
-          }
-        };
+  if (audioContext) {
+    audioContext.close().catch(() => {});
+    audioContext = null;
+  }
 
-        recognition.onend = () => {
-          restarting = false;
-          if (!active) setTimeout(startWakeRecognition, 1000);
-        };
+  if (stream) {
+    stream.getTracks().forEach(track => track.stop());
+    stream = null;
+  }
 
-        recognition.start();
-        wakeAvailable = true;
-        connection.textContent = 'BUDĖJIMO REŽIMAS';
-      } catch (error) {
-        restarting = false;
-        console.warn('Wake phrase unavailable:', error);
-        connection.textContent = 'PARENGTAS';
-      }
-    }
+  analyser = null;
+  micAnalyser = null;
+  playbackAnalyser = null;
+  playbackSource = null;
+  playbackElement = null;
+  cancelAnimationFrame(animationFrame);
+  ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+}
 
-    const SpeechRecognition =
-      window.SpeechRecognition || window.webkitSpeechRecognition;
+$('mic').addEventListener('click', () => {
+  if (recording) {
+    stopRecording();
+  } else if (!processing) {
+    beginRecording();
+  }
+});
 
-    if (SpeechRecognition) {
-      recognition = new SpeechRecognition();
-      startWakeRecognition();
-    } else {
-      connection.textContent = 'PARENGTAS';
-      console.info('This browser does not expose Web Speech Recognition.');
-    }
+$('close').addEventListener('click', leaveConversation);
 
-    $('mic').addEventListener('click', () => enterConversation(false));
-    $('close').addEventListener('click', leaveConversation);
+connection.textContent = 'PARENGTAS';
+setState('Paspausk mikrofoną, kad pradėtum');
+resizeCanvas();
+
   </script>
 </body>
 </html>
