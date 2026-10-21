@@ -1,0 +1,583 @@
+
+<!doctype html>
+<html lang="lt">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#050505">
+  <title>DI Atspindys</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #050505;
+      --fg: #f3f3f3;
+      --muted: #777;
+      --accent: #b8c9ff;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: Inter, "Segoe UI", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .screen {
+      position: relative;
+      min-height: 100svh;
+      padding: 42px 54px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header, footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .brand {
+      font-size: 13px;
+      letter-spacing: .24em;
+      text-transform: uppercase;
+    }
+
+    .connection {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: .08em;
+    }
+
+    .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #777;
+      transition: background .3s, box-shadow .3s;
+    }
+
+    body.active .dot {
+      background: var(--accent);
+      box-shadow: 0 0 12px var(--accent);
+    }
+
+    main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      min-height: 0;
+    }
+
+    .clock {
+      font-size: clamp(64px, 11vw, 132px);
+      line-height: 1;
+      font-weight: 300;
+      letter-spacing: -.075em;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .date {
+      margin-top: 18px;
+      color: #999;
+      font-size: 14px;
+      letter-spacing: .04em;
+      text-transform: capitalize;
+    }
+
+    .greeting {
+      margin-top: 54px;
+      font-size: clamp(20px, 2.3vw, 27px);
+      font-weight: 400;
+      letter-spacing: -.025em;
+    }
+
+    .hint {
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .conversation {
+      display: none;
+      width: min(100%, 760px);
+      align-items: center;
+      flex-direction: column;
+    }
+
+    body.active .idle { display: none; }
+    body.active .conversation { display: flex; }
+
+    .orb {
+      position: relative;
+      width: min(64vw, 440px);
+      height: min(35vh, 220px);
+      min-height: 130px;
+      display: grid;
+      place-items: center;
+      isolation: isolate;
+    }
+
+    .orb::before, .orb::after {
+      content: "";
+      position: absolute;
+      width: 125px;
+      height: 125px;
+      border-radius: 50%;
+      filter: blur(35px);
+      opacity: 0;
+      background: #819cff;
+      transition: opacity .5s;
+      z-index: -1;
+    }
+
+    body.active .orb::before { opacity: .15; }
+    body.speaking .orb::after {
+      opacity: .18;
+      transform: translateX(45px);
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .state {
+      margin-top: 6px;
+      font-size: 17px;
+      font-weight: 400;
+      letter-spacing: .01em;
+    }
+
+    .transcript {
+      min-height: 24px;
+      max-width: 600px;
+      margin-top: 14px;
+      color: #999;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+      margin-top: 26px;
+    }
+
+    button {
+      font: inherit;
+      cursor: pointer;
+      color: var(--fg);
+    }
+
+    .mic {
+      width: 58px;
+      height: 58px;
+      display: grid;
+      place-items: center;
+      border: 1px solid #444;
+      border-radius: 50%;
+      background: #171717;
+      transition: transform .2s, background .2s, border-color .2s;
+    }
+
+    .mic:hover {
+      transform: scale(1.06);
+      background: #242424;
+      border-color: #888;
+    }
+
+    .mic:active { transform: scale(.96); }
+
+    .mic svg {
+      width: 23px;
+      height: 23px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.6;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .end {
+      border: 0;
+      background: transparent;
+      color: #888;
+      font-size: 12px;
+      padding: 12px;
+    }
+
+    .end:hover { color: white; }
+
+    footer {
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: .04em;
+    }
+
+    .weather { text-align: right; }
+
+    @media (max-width: 600px) {
+      .screen { padding: 25px 22px; }
+      .brand { font-size: 10px; }
+      .clock { font-size: 19vw; }
+      .greeting { margin-top: 38px; }
+      .orb { width: 90vw; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        transition-duration: .01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="screen">
+    <header>
+      <div class="brand">DI <span style="color:#999">ATSPINDYS</span></div>
+      <div class="connection">
+        <span class="dot"></span>
+        <span id="connection">PARENGTAS</span>
+      </div>
+    </header>
+
+    <main>
+      <section class="idle">
+        <div class="clock" id="clock">--:--</div>
+        <div class="date" id="date">Įkeliama...</div>
+        <div class="greeting" id="greeting">Labas.</div>
+        <div class="hint">Sakyk „Labas, Atspindy“ arba paspausk mikrofoną</div>
+      </section>
+
+      <section class="conversation" aria-live="polite">
+        <div class="orb">
+          <canvas id="wave"></canvas>
+        </div>
+        <div class="state" id="state">Klausausi...</div>
+        <div class="transcript" id="transcript"></div>
+        <div class="controls">
+          <button class="mic" id="mic" aria-label="Aktyvuoti mikrofoną"
+                  title="Kalbėti su Atspindžiu">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="9" y="3" width="6" height="12" rx="3"/>
+              <path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 18v3m-4 0h8"/>
+            </svg>
+          </button>
+          <button class="end" id="close">Baigti pokalbį</button>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>ASMENINIS AI ASISTENTAS</span>
+      <span class="weather">ORAI · BUS PRIJUNGTI</span>
+    </footer>
+  </div>
+
+  <script>
+    const $ = id => document.getElementById(id);
+    const clock = $('clock');
+    const date = $('date');
+    const greeting = $('greeting');
+    const state = $('state');
+    const transcript = $('transcript');
+    const connection = $('connection');
+    const canvas = $('wave');
+    const ctx = canvas.getContext('2d');
+
+    let active = false;
+    let audioContext = null;
+    let analyser = null;
+    let stream = null;
+    let animationFrame = 0;
+    let recognition = null;
+    let manualMode = false;
+    let wakeAvailable = false;
+    let restarting = false;
+
+    function updateClock() {
+      const now = new Date();
+      clock.textContent = new Intl.DateTimeFormat('lt-LT', {
+        hour: '2-digit', minute: '2-digit', hour12: false
+      }).format(now);
+
+      date.textContent = new Intl.DateTimeFormat('lt-LT', {
+        weekday: 'long', year: 'numeric',
+        month: 'long', day: 'numeric'
+      }).format(now);
+
+      const hour = now.getHours();
+      greeting.textContent =
+        hour < 5 ? 'Labos nakties.' :
+        hour < 12 ? 'Labas rytas.' :
+        hour < 18 ? 'Laba diena.' : 'Labas vakaras.';
+    }
+
+    updateClock();
+    setInterval(updateClock, 1000);
+
+    function setState(text) {
+      state.textContent = text;
+    }
+
+    async function startAudio() {
+      if (stream) return;
+
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
+
+      audioContext = new (window.AudioContext ||
+                          window.webkitAudioContext)();
+
+      await audioContext.resume();
+      analyser = audioContext.createAnalyser();
+      analyser.fftSize = 512;
+      analyser.smoothingTimeConstant = 0.78;
+
+      audioContext.createMediaStreamSource(stream).connect(analyser);
+      resizeCanvas();
+      drawWave();
+    }
+
+    function resizeCanvas() {
+      const rect = canvas.getBoundingClientRect();
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.round(rect.width * dpr);
+      canvas.height = Math.round(rect.height * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    window.addEventListener('resize', resizeCanvas);
+
+    function drawWave() {
+      cancelAnimationFrame(animationFrame);
+
+      const w = canvas.clientWidth;
+      const h = canvas.clientHeight;
+      if (!w || !h) return;
+
+      const bins = analyser
+        ? new Uint8Array(analyser.frequencyBinCount)
+        : null;
+
+      let phase = 0;
+
+      function frame() {
+        animationFrame = requestAnimationFrame(frame);
+        ctx.clearRect(0, 0, w, h);
+        phase += 0.025;
+
+        if (bins && analyser) analyser.getByteFrequencyData(bins);
+
+        const energy = bins
+          ? bins.reduce((sum, value) => sum + value, 0) /
+            bins.length / 110
+          : 0.04;
+
+        const amplitude = 5 + Math.min(energy, 1) * 46;
+        const lines = 7;
+
+        for (let layer = 0; layer < lines; layer++) {
+          ctx.beginPath();
+
+          for (let x = 0; x <= w; x += 2) {
+            const t = x / w;
+            const envelope = Math.pow(Math.sin(Math.PI * t), 0.8);
+            const frequency = 1.7 + layer * 0.11;
+            const audio = bins
+              ? (bins[Math.min(
+                  bins.length - 1,
+                  Math.floor(t * bins.length)
+                )] / 255) * 0.7
+              : 0;
+
+            const wave =
+              Math.sin(t * Math.PI * frequency * 2 + phase +
+                       layer * 0.24) *
+              (amplitude * (0.2 + audio)) * envelope;
+
+            const ripple =
+              Math.sin(t * 18 - phase * 1.5 + layer) *
+              amplitude * 0.13 * envelope;
+
+            const y = h / 2 + wave + ripple;
+            if (x === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          }
+
+          const alpha = 0.12 + (layer / lines) * 0.48;
+          ctx.strokeStyle = `rgba(190, 205, 255, ${alpha})`;
+          ctx.lineWidth = layer === lines - 1 ? 1.8 : 1;
+          ctx.stroke();
+        }
+      }
+
+      frame();
+    }
+
+    async function enterConversation(fromWake = false) {
+      if (active) return;
+
+      active = true;
+      manualMode = !fromWake;
+      document.body.classList.add('active');
+      connection.textContent = 'AKTYVUS';
+      setState('Klausausi...');
+      transcript.textContent = '';
+
+      try {
+        await startAudio();
+        if (recognition) {
+          try { recognition.stop(); } catch {}
+        }
+        startCommandRecognition();
+      } catch (error) {
+        setState('Mikrofonas nepasiekiamas');
+        transcript.textContent =
+          'Patikrinkite naršyklės mikrofono leidimus.';
+        console.error(error);
+      }
+    }
+
+    function leaveConversation() {
+      active = false;
+      manualMode = false;
+      restarting = false;
+      document.body.classList.remove('active', 'speaking');
+      connection.textContent = 'PARENGTAS';
+      setState('Klausausi...');
+      transcript.textContent = '';
+
+      if (recognition) {
+        try { recognition.stop(); } catch {}
+      }
+
+      cancelAnimationFrame(animationFrame);
+
+      if (audioContext) {
+        audioContext.close().catch(() => {});
+        audioContext = null;
+      }
+
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        stream = null;
+        analyser = null;
+      }
+
+      // Re-arm wake-word listening after the mic has been released.
+      setTimeout(startWakeRecognition, 800);
+    }
+
+    function startCommandRecognition() {
+      if (!recognition || !active) {
+        setState('Mikrofonas veikia');
+        transcript.textContent =
+          'Garso vizualizacija veikia. Kalbos atpažinimas šioje naršyklėje nepalaikomas.';
+        return;
+      }
+
+      try {
+        recognition.lang = 'lt-LT';
+        recognition.continuous = false;
+        recognition.interimResults = true;
+        recognition.onresult = event => {
+          let text = '';
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            text += event.results[i][0].transcript;
+          }
+          transcript.textContent = text;
+          setState(event.results[event.results.length - 1].isFinal
+            ? 'Išgirdau'
+            : 'Klausausi...');
+        };
+        recognition.onend = () => {
+          if (active && manualMode) {
+            setState('Paspausk mikrofoną ir bandyk dar kartą');
+          }
+        };
+        recognition.start();
+      } catch (error) {
+        console.warn('Speech recognition:', error);
+      }
+    }
+
+    function startWakeRecognition() {
+      if (!recognition || active || restarting) return;
+      restarting = true;
+
+      try {
+        recognition.lang = 'lt-LT';
+        recognition.continuous = true;
+        recognition.interimResults = true;
+
+        recognition.onresult = event => {
+          let phrase = '';
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            phrase += event.results[i][0].transcript.toLowerCase();
+          }
+
+          if (phrase.includes('atspindy') &&
+              (phrase.includes('labas') || phrase.includes('hey'))) {
+            restarting = false;
+            enterConversation(true);
+          }
+        };
+
+        recognition.onerror = event => {
+          if (event.error !== 'no-speech') {
+            console.warn('Wake phrase:', event.error);
+          }
+        };
+
+        recognition.onend = () => {
+          restarting = false;
+          if (!active) setTimeout(startWakeRecognition, 1000);
+        };
+
+        recognition.start();
+        wakeAvailable = true;
+        connection.textContent = 'BUDĖJIMO REŽIMAS';
+      } catch (error) {
+        restarting = false;
+        console.warn('Wake phrase unavailable:', error);
+        connection.textContent = 'PARENGTAS';
+      }
+    }
+
+    const SpeechRecognition =
+      window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    if (SpeechRecognition) {
+      recognition = new SpeechRecognition();
+      startWakeRecognition();
+    } else {
+      connection.textContent = 'PARENGTAS';
+      console.info('This browser does not expose Web Speech Recognition.');
+    }
+
+    $('mic').addEventListener('click', () => enterConversation(false));
+    $('close').addEventListener('click', leaveConversation);
+  </script>
+</body>
+</html>
+
